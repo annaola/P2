@@ -10,4 +10,15 @@ Program przy starcie tworzy określoną liczbę wątków żądających dostępu 
 
 Żądania są kolejkowane w porządku SSTF (następne obsługiwane żądanie dostępu znajduje się najbliżej aktualnej ścieżki). Początkowa ścieżka dysku to 0.
 
+#### Wejście
+Program uruchamiany jest z kilkoma argumentami. Pierwszy to maksymalna liczba żądań w kolejce. Pozostałe to pliki wejściowe, po jednym dla każdego uruchamianego wątku.
+
+#### Wyjście
+Po wysłaniu żądania, wątek powinien wypisać:
+cout << "requester" << requester << " track " << track << endl;
+Wówczas żądanie jest gotowe do obsłużenia.
+
+Po obsłużeniu żądania, wątek obsługujący powinien wypisać:
+cout << "service requester " << requester << " track " << track << endl;
+
 *Źródło: <https://people.cs.umass.edu/~mcorner/courses/691J/project1.text>*
