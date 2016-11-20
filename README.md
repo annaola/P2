@@ -16,12 +16,12 @@ Program uruchamiany jest z kilkoma argumentami. Pierwszy to maksymalna liczba ż
 #### Wyjście
 Po wysłaniu żądania, wątek powinien wypisać:
 
-**cout << "requester" << requester << " track " << track << endl;**
+**cout  <<  "requester"  <<  requester  <<  " track "  <<  track  <<  endl;**
 
 Wówczas żądanie jest gotowe do obsłużenia.
 
 Po obsłużeniu żądania, wątek obsługujący powinien wypisać:
 
-**cout << "service requester " << requester << " track " << track << endl;**
+**cout  <<  "service requester "  <<  requester  <<  " track "  <<  track  <<  endl;**
 
 *Źródło: <https://people.cs.umass.edu/~mcorner/courses/691J/project1.text>*
