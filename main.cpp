@@ -3,6 +3,8 @@
 #include <fstream>
 #include <string>
 #include <cstdlib>
+#include <vector>
+#include <mutex>
 
 using namespace std;
 
@@ -148,10 +150,53 @@ public:
 	}
 };
 
+mutex mut;
+
+void thread_handling(string name)
+{
+	vector<int> trucks;
+	fstream file;
+	file.open(name, ios::in);
+	if (file.good())
+	{
+		int line = 0;
+		string truck;
+		while (!file.eof())
+		{
+			getline(file, truck);
+			//cout << truck << " ";
+			trucks.push_back(atoi(truck.c_str()));
+			line++;
+		}
+	}
+	else cout << "Błąd dostępu do pliku" << endl;
+	mut.lock();
+	for (size_t i = 0; i < trucks.size(); i++)
+	{
+		cout << trucks[i] << " ";
+	}
+	cout << endl;
+	mut.unlock();
+}
 
 
 int main(int argc, char const *argv[])
 {
+	thread Threads[argc-2];
+	//SSTF_Queue queue = SSTF_Queue(atoi(argv[1]));
+	//SSTF_Queue *q = & queue;
+
+	for (int i = 0; i < argc-2; i++)
+	{
+		Threads[i] = thread(&thread_handling, argv[i+2]);
+	}
+	for (int i = 0; i < argc-2; i++)
+	{
+		Threads[i].join();
+	}
+
+	//thread_handling(argv[2], q);
+
 	/*SSTF_Queue queue(10);
 	for (int i = 1; i < 11; i++)
 	{
