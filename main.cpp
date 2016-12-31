@@ -5,12 +5,13 @@
 #include <cstdlib>
 #include <vector>
 #include <mutex>
+#include <tuple>
 
 using namespace std;
 
 struct node
 {
-	int val;
+	int val, truck;
 	struct node *prev;
 	struct node *next;
 };
@@ -21,26 +22,33 @@ class SSTF_Queue
 	node *front, *curr;
 
 public:
-	int curr_size;
+	vector<int> Trucks;
+	int curr_size, trucks_numb;
 
 	//SSTF_Queue() : capacity{0}, front{NULL}, curr{NULL}, curr_size{0} {}
 
-	SSTF_Queue(int capacity) : capacity{capacity}, front{new node}, curr{new node}, curr_size{0}
+	SSTF_Queue(int capacity, int trucks_num) : capacity{capacity}, front{new node}, curr{new node} , curr_size{0}, trucks_numb{trucks_num}
 	{
 		front->val = 0;
+		front->truck = -1;
 		front->prev = NULL;
 		front->next = NULL;
 		curr = front;
+		for (int i = 0; i < trucks_num; i++)
+		{
+			Trucks.push_back(0);
+		}
 	}
 
-	void insert(int val)
+	bool insert(int val, int truck)
 	{
 		node *temp, *ptr;
 
 		temp = new node;
 		temp->val = val;
+		temp->truck = truck;
 
-		if (curr_size < capacity)
+		if (curr_size < capacity && Trucks[truck] == 0)
 		{
 			if (val < front->val)
 			{
@@ -61,22 +69,24 @@ public:
 				ptr->next = temp;
 			}
 			curr_size++;
+			Trucks[truck] = 1;
+			return true;
 		}
 		else
 		{
-			cout << "Kolejka pełna" << endl;
+			return false;
 		}
 	}
 
-	int take()
+	tuple<int, int> take()
 	{
 		int ret = -1;
-		int curr_val;
+		int curr_val, truck;
 		node *temp = curr;
 
 		curr_val = curr->val;
 
-		if (curr_size == 1)
+		if (curr_size == 0)
 		{
 			cout << "Kolejka pusta";
 		}
@@ -84,17 +94,18 @@ public:
 		{
 			if (curr->prev == NULL)
 			{
-				//cout << "tutaj\n";
 				curr = curr->next;
 				curr->prev = NULL;
 				front = curr;
 				ret = curr->val;
+				truck = curr->truck;
 			}
 			else if (curr->next == NULL)
 			{
 				curr = curr->prev;
 				curr->next = NULL;
 				ret = curr->val;
+				truck = curr->truck;
 			}
 			else if (curr_val - curr->prev->val < curr->next->val - curr_val)
 			{
@@ -102,6 +113,7 @@ public:
 				curr->next->prev = curr->prev;
 				curr = curr->prev;
 				ret = curr->val;
+				truck = curr->truck;
 			}
 			else
 			{
@@ -109,10 +121,13 @@ public:
 				curr->next->prev = curr->prev;
 				curr = curr->next;
 				ret = curr->val;
+				truck = curr->truck;
 			}
 			free(temp);
+			Trucks[truck] = 0;
+			curr_size--;
 		}
-		return ret;
+		return make_tuple(ret, truck);
 	}
 
 	void print()
@@ -141,20 +156,15 @@ public:
 			}
 			cout << endl;
 		}
-		/*cout << "Aktualna wartość: " << curr->val << endl;
-		cout << "Następna wartość: " << curr->next->val << endl;
-		if (curr->prev != NULL)
-		{
-			cout << "Poprzednia wartość: " << curr->prev->val << endl;
-		}*/
 	}
 };
 
 mutex mut;
 
-void thread_handling(string name)
+void thread_handling(string name, int num, SSTF_Queue *queue)
 {
 	vector<int> trucks;
+	bool insert;
 	fstream file;
 	file.open(name, ios::in);
 	if (file.good())
@@ -164,56 +174,58 @@ void thread_handling(string name)
 		while (!file.eof())
 		{
 			getline(file, truck);
-			//cout << truck << " ";
 			trucks.push_back(atoi(truck.c_str()));
 			line++;
 		}
 	}
 	else cout << "Błąd dostępu do pliku" << endl;
-	mut.lock();
+
 	for (size_t i = 0; i < trucks.size(); i++)
 	{
-		cout << trucks[i] << " ";
+		insert = false;
+		while (insert == false)
+		{
+			mut.lock();
+			insert = queue->insert(trucks[i], num);
+			if (insert == true)
+			{
+				cout << "requester " << num << " track " << trucks[i] << endl;
+			}
+			mut.unlock();
+		}
 	}
-	cout << endl;
-	mut.unlock();
+	queue->trucks_numb--;
+}
+
+void main_thread(SSTF_Queue *queue)
+{
+	tuple<int, int> tuple;
+	while (queue->trucks_numb > 0)
+	{
+		if (queue->curr_size > 0)
+		{
+			mut.lock();
+			tuple = queue->take();
+			cout << "service requester " << get<1>(tuple) << " track " << get<0>(tuple) << endl;
+			mut.unlock();
+		}
+	}
 }
 
 
 int main(int argc, char const *argv[])
 {
-	thread Threads[argc-2];
-	//SSTF_Queue queue = SSTF_Queue(atoi(argv[1]));
-	//SSTF_Queue *q = & queue;
+	thread Threads[argc-1];
+	SSTF_Queue queue = SSTF_Queue(atoi(argv[1]), argc-2);
 
 	for (int i = 0; i < argc-2; i++)
 	{
-		Threads[i] = thread(&thread_handling, argv[i+2]);
+		Threads[i] = thread(&thread_handling, argv[i+2], i, &queue);
 	}
-	for (int i = 0; i < argc-2; i++)
+	Threads[argc-2] = thread(&main_thread, &queue);
+	for (int i = 0; i < argc-1; i++)
 	{
 		Threads[i].join();
 	}
-
-	//thread_handling(argv[2], q);
-
-	/*SSTF_Queue queue(10);
-	for (int i = 1; i < 11; i++)
-	{
-		queue.insert(i);
-	}
-	queue.insert(3);
-	queue.insert(1);
-	queue.insert(7);
-	queue.insert(5);
-	queue.print();
-	queue.take();
-	queue.print();
-	queue.take();
-	queue.print();
-	queue.insert(2);
-	queue.print();
-	queue.take();
-	queue.print();*/
 	return 0;
 }
