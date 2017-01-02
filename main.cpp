@@ -9,67 +9,83 @@
 
 using namespace std;
 
+// element kolejki dwukierunkowej
 struct node
 {
-	int val, truck;
-	struct node *prev;
-	struct node *next;
+	int val, thread; 	// wartość ścieżki i nr wątku, który ją dorzucił
+	struct node *prev; 	// wskaźnik na poprzedni element kolejki
+	struct node *next;	// wskaźnik na kolejny element kolejki
 };
 
+/* Kolejka SSTF oparta na kolejce dwukierunkowej
+Ogólny pomysł polegał na stworzeniu uporządkowanej kolejki składającej się z elementów potrzebujących dostępu do dysku
+oraz elementu sybolizującego aktualne położenie głowicy na dysku.
+*/
 class SSTF_Queue
 {
-	int capacity;
-	node *front, *curr;
+	node *first, *last, *curr;	// wskaźniki na pierwszy i ostatni element oraz wskaźnik na element symbolizujący położenie głowicy
 
 public:
-	vector<int> Trucks;
-	int curr_size, trucks_numb;
+	vector<int> Threads;								// vector, który będzie wskazywać, czy dany wątek ma już element w kolejce
+	int capacity, curr_size, threads_numb, active_t;	// pojemność i aktualny rozmiar kolejki, liczba wątków, które nie mają elementów w kolejce oraz liczba aktywnych jeszcze wątków
 
-	//SSTF_Queue() : capacity{0}, front{NULL}, curr{NULL}, curr_size{0} {}
-
-	SSTF_Queue(int capacity, int trucks_num) : capacity{capacity}, front{new node}, curr{new node} , curr_size{0}, trucks_numb{trucks_num}
+	SSTF_Queue(int capacity, int threads_num) : first{new node}, last{new node}, curr{new node},
+												capacity{capacity}, curr_size{0}, threads_numb{threads_num}, active_t{threads_num}
 	{
-		front->val = 0;
-		front->truck = -1;
-		front->prev = NULL;
-		front->next = NULL;
-		curr = front;
-		for (int i = 0; i < trucks_num; i++)
+		first->val = 0;
+		first->thread = -1;
+		first->prev = NULL;
+		first->next = NULL;
+		curr = first;
+		last = first;
+		for (int i = 0; i < threads_num; i++)
 		{
-			Trucks.push_back(0);
+			Threads.push_back(0);
 		}
 	}
 
-	bool insert(int val, int truck)
+	bool insert(int val, int thread)
 	{
-		node *temp, *ptr;
+		node *temp, *ptr1, *ptr2;
 
 		temp = new node;
 		temp->val = val;
-		temp->truck = truck;
+		temp->thread = thread;
 
-		if (curr_size < capacity && Trucks[truck] == 0)
+		if (curr_size < capacity && Threads[thread] == 0)
 		{
-			if (val < front->val)
+			if (val < first->val)
 			{
-				temp->next = front;
-				front->prev = temp;
-				front = temp;
+				temp->next = first;
+				first->prev = temp;
+				first = temp;
+			}
+			else if (val > last->val)
+			{
+				temp->prev = last;
+				last->next = temp;
+				last = temp;
 			}
 			else
 			{
-				ptr = front;
+				ptr1 = first;
+				ptr2 = first->next;
 
-				while (ptr->next != NULL && ptr->next->val <= val)
+				while (ptr2->next != NULL && ptr1->next->val <= val)
 				{
-					ptr = ptr->next;
+					ptr1 = ptr1->next;
+					ptr2 = ptr2->next;
 				}
-				temp->next = ptr->next;
-				temp->prev = ptr;
-				ptr->next = temp;
+
+				//tu jest coś nie tak
+				temp->next = ptr2;
+				ptr2->prev = temp;
+				temp->prev = ptr1;
+				ptr1->next = temp;
 			}
 			curr_size++;
-			Trucks[truck] = 1;
+			Threads[thread] = 1;
+			threads_numb--;
 			return true;
 		}
 		else
@@ -81,7 +97,7 @@ public:
 	tuple<int, int> take()
 	{
 		int ret = -1;
-		int curr_val, truck;
+		int curr_val, thread;
 		node *temp = curr;
 
 		curr_val = curr->val;
@@ -92,20 +108,21 @@ public:
 		}
 		else
 		{
-			if (curr->prev == NULL)
+			if (curr == first)
 			{
 				curr = curr->next;
 				curr->prev = NULL;
-				front = curr;
+				first = curr;
 				ret = curr->val;
-				truck = curr->truck;
+				thread = curr->thread;
 			}
-			else if (curr->next == NULL)
+			else if (curr == last)
 			{
 				curr = curr->prev;
 				curr->next = NULL;
+				last = curr;
 				ret = curr->val;
-				truck = curr->truck;
+				thread = curr->thread;
 			}
 			else if (curr_val - curr->prev->val < curr->next->val - curr_val)
 			{
@@ -113,7 +130,7 @@ public:
 				curr->next->prev = curr->prev;
 				curr = curr->prev;
 				ret = curr->val;
-				truck = curr->truck;
+				thread = curr->thread;
 			}
 			else
 			{
@@ -121,23 +138,24 @@ public:
 				curr->next->prev = curr->prev;
 				curr = curr->next;
 				ret = curr->val;
-				truck = curr->truck;
+				thread = curr->thread;
 			}
 			free(temp);
-			Trucks[truck] = 0;
+			Threads[thread] = 0;
 			curr_size--;
+			threads_numb++;
 		}
-		return make_tuple(ret, truck);
+		return make_tuple(ret, thread);
 	}
 
 	void print()
 	{
 		node *pom;
-		pom = front;
+		pom = first;
 
-		cout << curr->val <<": ";
+		cout << first->val << ", " << curr->val <<": ";
 
-		if (front == NULL) 
+		if (first == NULL) 
 		{
 			cout << "Queue is empty\n";
 		}
@@ -148,6 +166,7 @@ public:
 				cout << pom->val << " ";
 				pom = pom->next;
 			}
+			cout << " *" << pom->val << " ";
 			pom = pom->next;
 			while (pom != NULL)
 			{
@@ -163,51 +182,62 @@ mutex mut;
 
 void thread_handling(string name, int num, SSTF_Queue *queue)
 {
-	vector<int> trucks;
+	vector<int> threads;
 	bool insert;
 	fstream file;
 	file.open(name, ios::in);
 	if (file.good())
 	{
 		int line = 0;
-		string truck;
+		string thread;
 		while (!file.eof())
 		{
-			getline(file, truck);
-			trucks.push_back(atoi(truck.c_str()));
+			getline(file, thread);
+			threads.push_back(atoi(thread.c_str()));
 			line++;
 		}
 	}
 	else cout << "Błąd dostępu do pliku" << endl;
 
-	for (size_t i = 0; i < trucks.size(); i++)
+	//cout << threads.size() << endl;
+	for (size_t i = 0; i < threads.size(); i++)
 	{
+		//cout << i << endl;
 		insert = false;
 		while (insert == false)
 		{
 			mut.lock();
-			insert = queue->insert(trucks[i], num);
+			insert = queue->insert(threads[i], num);
 			if (insert == true)
 			{
-				cout << "requester " << num << " track " << trucks[i] << endl;
+				cout << "requester " << num << " thread " << threads[i] << endl;
+				//queue->print();
+				queue->threads_numb--;
+				if (i == threads.size()-1)
+				{
+					queue->active_t--;
+				}
 			}
 			mut.unlock();
 		}
 	}
-	queue->trucks_numb--;
 }
 
-void main_thread(SSTF_Queue *queue)
+void main_thread(SSTF_Queue *queue, int num)
 {
 	tuple<int, int> tuple;
-	while (queue->trucks_numb > 0)
+	while (queue->curr_size < queue->capacity) {}
+	while (queue->curr_size > 0)
 	{
-		if (queue->curr_size > 0)
+		//cout << queue->threads_numb << "," << queue->active_t << endl;
+		if (queue->curr_size == queue->capacity || queue->threads_numb == queue->active_t || queue->active_t == 0)
 		{
 			mut.lock();
 			tuple = queue->take();
-			cout << "service requester " << get<1>(tuple) << " track " << get<0>(tuple) << endl;
-			mut.unlock();
+			cout << "service requester " << get<1>(tuple) << " thread " << get<0>(tuple) << endl;
+			//queue->print();
+			queue->threads_numb++;
+			mut.unlock();			
 		}
 	}
 }
@@ -222,7 +252,7 @@ int main(int argc, char const *argv[])
 	{
 		Threads[i] = thread(&thread_handling, argv[i+2], i, &queue);
 	}
-	Threads[argc-2] = thread(&main_thread, &queue);
+	Threads[argc-2] = thread(&main_thread, &queue, argc-2);
 	for (int i = 0; i < argc-1; i++)
 	{
 		Threads[i].join();
