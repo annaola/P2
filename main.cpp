@@ -40,7 +40,7 @@ public:
 		last = first;
 	}
 
-	void insert(int val, int thread)
+	void insert(int val, int thread)	// dodawanie elementu do kolejki w odpowieniej kolejności
 	{
 		node *temp, *ptr1, *ptr2;
 
@@ -83,7 +83,8 @@ public:
 		}
 	}
 
-	tuple<int, int> take()
+	tuple<int, int> take()	// zabieranie elementu z kolejki. Zwracana jest krotka zawierająca wartość ścieżki
+							// i nr wątku, który ją dodał
 	{
 		int ret = -1;
 		int curr_val, thread;
@@ -134,150 +135,113 @@ public:
 		}
 		return make_tuple(ret, thread);
 	}
-
-	void print()
-	{
-		node *pom;
-		pom = first;
-
-		cout << first->val << ", " << curr->val <<": ";
-
-		if (first == NULL) 
-		{
-			cout << "Queue is empty\n";
-		}
-		else
-		{
-			while (pom != curr)
-			{
-				cout << pom->val << " ";
-				pom = pom->next;
-			}
-			cout << " *" << pom->val << " ";
-			pom = pom->next;
-			while (pom != NULL)
-			{
-				cout << pom->val << " ";
-				pom = pom->next;
-			}
-			cout << endl;
-		}
-	}
 };
 
-int max_queue_capacity;
-int num_liv_thr;
 
-sem_t *Semaphores;
-sem_t full_queue_sem;
-sem_t max_queue_capacity_sem;
-sem_t queue_mut;
 
-mutex print;
-mutex num_liv_thr_mut;
+int max_queue_capacity;			// maksymalna pojemność kolejki
+int num_liv_thr;				// liczba wciąż żyjących wątków
 
+sem_t *Semaphores;				// tablica semaforów kontrolujących, czy dany wątek ma już ścieżkę w kolejce
+sem_t full_queue_sem;			// semafor kontrolujący, czy kolejka może być bardziej pełna, aby zminimalizować średni czas dostępu
+sem_t max_queue_capacity_sem;	// semafor kontrolujący, czy kolejka nie przekracza swojej maksymalnej wielkości
+sem_t queue_mut;				// semafor ograniczający dostęp do kolejki tylko dla jednego wątku w celu wykonania operacji na niej
+
+mutex print;					// muteks blokujący dostęp do wyjścia
+mutex num_liv_thr_mut;			// muteks blokujący dostęp do zmiennej num_liv_thr
+
+// obsługa konkretnego wątku: odczyt ścieżek z pliku, dodawanie ścieżek do kolejki
 void thread_handling(string name, int num, SSTF_Queue *queue)
 {
-	vector<int> tracks;
 	fstream file;
-	file.open(name, ios::in);
+	file.open(name, ios::in);		// otwieranie pliku
 	if (file.good())
 	{
 		int line = 0;
 		string track;
 		while (!file.eof())
 		{
-			getline(file, track);
-			tracks.push_back(atoi(track.c_str()));
+			getline(file, track);				// wczytanie wartości ścieżki
+			sem_wait(&Semaphores[num]);			// wątek czeka, aż jego wcześniejsze żądanie zostanie obsłużone
+			sem_wait(&max_queue_capacity_sem);	// wątek czeka, aż kolejka nie będzie pełna
+			sem_wait(&queue_mut);				// wątek "rezerwuje" kolejkę dla siebie
+				print.lock();					// blokada wyjścia
+					queue->insert(atoi(track.c_str()), num);	//dodawanie ścieżki do kolejki
+					cout << "requester " << num << " track " << atoi(track.c_str()) << endl;	// wypisanie odpowiedniego komunikatu
+				print.unlock();					// odblokowanie wyjścia
+				num_liv_thr_mut.lock();			// blokowanie zmiennej
+					if (queue->curr_size == min(max_queue_capacity, num_liv_thr)){	// jeśli kolejka nie może być bardziej pełna,
+						sem_post(&full_queue_sem);									// to możemy zabrać z niej element
+					}
+				num_liv_thr_mut.unlock();		// odblokowanie zmiennej
+			sem_post(&queue_mut);				// udostępnienie kolejki innym wątkom
 			line++;
 		}
 	}
 	else cout << "Błąd dostępu do pliku" << endl;
 
-	//cout << tracks.size() << endl;
-	for (size_t i = 0; i < tracks.size(); i++)
-	{
-		//cout << i << endl;
-		sem_wait(&Semaphores[num]);
-		sem_wait(&max_queue_capacity_sem);
-		sem_wait(&queue_mut);
-			print.lock();
-				queue->insert(tracks[i], num);
-				cout << "requester " << num << " track " << tracks[i] << endl;
-			print.unlock();
-			num_liv_thr_mut.lock();
-			//cout << queue->curr_size << "-" << num_liv_thr << "-" << max_queue_capacity << endl;
-				if (queue->curr_size == min(max_queue_capacity, num_liv_thr)){
-					sem_post(&full_queue_sem);
-				}
-			num_liv_thr_mut.unlock();
-		sem_post(&queue_mut);
-	}
-	sem_wait(&Semaphores[num]);
+	sem_wait(&Semaphores[num]);					// wątek czeka, aż jego ostatnie żądanie wyjdzie z kolejki
 	sem_wait(&queue_mut);
-	num_liv_thr_mut.lock();
-		num_liv_thr--;
-			print.lock();
-			//cout << queue->curr_size << "-" << num_liv_thr << "-" << max_queue_capacity << endl;
-			print.unlock();
-		if (queue->curr_size == num_liv_thr) {
-			//cout << "a\n";
-			//cout << queue->curr_size << "-" << num_liv_thr << "-" << max_queue_capacity << endl;
-			sem_post(&full_queue_sem);
+	num_liv_thr_mut.lock();						// blokada operacji na zmiennej
+		num_liv_thr--;							// zmniejszenie liczby żywych wątków (ten już nic nie doda)
+		if (queue->curr_size == num_liv_thr) {	// jeśli liczba wątków w kolejce jest równa liczbie żywych wątków,
+			sem_post(&full_queue_sem);			// kolejka nie będzie pełna bardziej
 		}
-	num_liv_thr_mut.unlock();
+	num_liv_thr_mut.unlock();					// odblokowanie operacji na zmiennej
 	sem_post(&queue_mut);
 }
 
+// wątek zarządzający
 void main_thread(SSTF_Queue *queue, int num)
 {
 	tuple<int, int> tuple;
 	
 	while (queue->curr_size > 0 || num_liv_thr > 0)
 	{
-		//cout << "b\n";
-		sem_wait(&full_queue_sem);
+		sem_wait(&full_queue_sem);				// zarządca czeka, aż nie będzie możliwe dodanie do kolejki nowego elementu
+
 		num_liv_thr_mut.lock();
-			if (num_liv_thr == 0) {
+			if (num_liv_thr == 0) {				// jeśli liczba żywych wątków jest równa 0, to wątek się kończy
 				break;
 			}
 		num_liv_thr_mut.unlock();
-		//cout << "c\n";
-		sem_wait(&queue_mut);
-			print.lock();
-				tuple = queue->take();
-				cout << "service requester " << get<1>(tuple) << " thread " << get<0>(tuple) << endl;
-				//cout << "num_liv_thr: " << num_liv_thr << endl;
-			print.unlock();
-		sem_post(&queue_mut);
-		sem_post(&max_queue_capacity_sem);
-		sem_post(&Semaphores[get<1>(tuple)]);
-		//cout << queue->curr_size << "-" << num_liv_thr << endl;
+
+		sem_wait(&queue_mut);					// blokada operacji na kolejce dla innych wątków
+			print.lock();						// blokada wyjścia
+				tuple = queue->take();			// pobranie elementu z kolejki
+				cout << "service requester " << get<1>(tuple) << " thread " << get<0>(tuple) << endl;	// wypisanie odpowiedniego komunikatu
+			print.unlock();						// odblokowanie wyjścia
+		sem_post(&queue_mut);					// odblokowanie operacji na kolejce dla innych wątków
+		sem_post(&max_queue_capacity_sem);		// kolejka nie jest już pełna
+		sem_post(&Semaphores[get<1>(tuple)]);	// dany wątek może dodać nowe żądanie do kolejki
 	}
 }
 
 int main(int argc, char const *argv[])
 {
+	// przypisanie odpowiednich wartości zmiennym
 	int threads_num = argc-2;
 	num_liv_thr = argc-2;
 	max_queue_capacity = atoi(argv[1]);
-	thread Threads[threads_num+1];
-	Semaphores = new sem_t[threads_num];
-	SSTF_Queue queue = SSTF_Queue(max_queue_capacity);
 
+	thread Threads[threads_num+1];										// tablica wątków wraz z wątkiem zarządzającym
+	Semaphores = new sem_t[threads_num];								// tablica semaforów
+	SSTF_Queue queue = SSTF_Queue(max_queue_capacity);					// utworzenie kolejki o włąściwej pojemności
+
+	// inicjalizacja semaforów
 	sem_init(&full_queue_sem, 0, 0);
 	sem_init(&max_queue_capacity_sem, 0, max_queue_capacity);
 	sem_init(&queue_mut, 0, 1);
 
 	for (int i = 0; i < threads_num; i++)
 	{
-		Threads[i] = thread(&thread_handling, argv[i+2], i, &queue);
-		sem_init(&Semaphores[i], 0, 1);
+		sem_init(&Semaphores[i], 0, 1);									// inicjalizacja semaforów
+		Threads[i] = thread(&thread_handling, argv[i+2], i, &queue);	// tworzenie wątków
 	}
-	Threads[threads_num] = thread(&main_thread, &queue, threads_num);
+	Threads[threads_num] = thread(&main_thread, &queue, threads_num);	// tworzenie wątku zarządzającego
 	for (int i = 0; i < argc-1; i++)
 	{
-		Threads[i].join();
+		Threads[i].join();												// zakończenie wątków
 	}
 	return 0;
 }
