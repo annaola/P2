@@ -6,6 +6,8 @@
 #include <vector>
 #include <mutex>
 #include <tuple>
+#include <semaphore.h>
+#include <algorithm>
 
 using namespace std;
 
@@ -26,11 +28,9 @@ class SSTF_Queue
 	node *first, *last, *curr;	// wskaźniki na pierwszy i ostatni element oraz wskaźnik na element symbolizujący położenie głowicy
 
 public:
-	vector<int> Threads;								// vector, który będzie wskazywać, czy dany wątek ma już element w kolejce
-	int capacity, curr_size, threads_numb, active_t;	// pojemność i aktualny rozmiar kolejki, liczba wątków, które nie mają elementów w kolejce oraz liczba aktywnych jeszcze wątków
+	int capacity, curr_size;	// pojemność i aktualny rozmiar kolejki
 
-	SSTF_Queue(int capacity, int threads_num) : first{new node}, last{new node}, curr{new node},
-												capacity{capacity}, curr_size{0}, threads_numb{threads_num}, active_t{threads_num}
+	SSTF_Queue(int capacity) : first{new node}, last{new node}, curr{new node}, capacity{capacity}, curr_size{0}
 	{
 		first->val = 0;
 		first->thread = -1;
@@ -38,13 +38,9 @@ public:
 		first->next = NULL;
 		curr = first;
 		last = first;
-		for (int i = 0; i < threads_num; i++)
-		{
-			Threads.push_back(0);
-		}
 	}
 
-	bool insert(int val, int thread)
+	void insert(int val, int thread)
 	{
 		node *temp, *ptr1, *ptr2;
 
@@ -52,7 +48,7 @@ public:
 		temp->val = val;
 		temp->thread = thread;
 
-		if (curr_size < capacity && Threads[thread] == 0)
+		if (curr_size < capacity)
 		{
 			if (val < first->val)
 			{
@@ -84,13 +80,6 @@ public:
 				ptr1->next = temp;
 			}
 			curr_size++;
-			Threads[thread] = 1;
-			threads_numb--;
-			return true;
-		}
-		else
-		{
-			return false;
 		}
 	}
 
@@ -141,9 +130,7 @@ public:
 				thread = curr->thread;
 			}
 			free(temp);
-			Threads[thread] = 0;
 			curr_size--;
-			threads_numb++;
 		}
 		return make_tuple(ret, thread);
 	}
@@ -178,81 +165,116 @@ public:
 	}
 };
 
-mutex mut;
+int max_queue_capacity;
+int num_liv_thr;
+
+sem_t *Semaphores;
+sem_t full_queue_sem;
+sem_t max_queue_capacity_sem;
+sem_t queue_mut;
+
+mutex print;
+mutex num_liv_thr_mut;
 
 void thread_handling(string name, int num, SSTF_Queue *queue)
 {
-	vector<int> threads;
-	bool insert;
+	vector<int> tracks;
 	fstream file;
 	file.open(name, ios::in);
 	if (file.good())
 	{
 		int line = 0;
-		string thread;
+		string track;
 		while (!file.eof())
 		{
-			getline(file, thread);
-			threads.push_back(atoi(thread.c_str()));
+			getline(file, track);
+			tracks.push_back(atoi(track.c_str()));
 			line++;
 		}
 	}
 	else cout << "Błąd dostępu do pliku" << endl;
 
-	//cout << threads.size() << endl;
-	for (size_t i = 0; i < threads.size(); i++)
+	//cout << tracks.size() << endl;
+	for (size_t i = 0; i < tracks.size(); i++)
 	{
 		//cout << i << endl;
-		insert = false;
-		while (insert == false)
-		{
-			mut.lock();
-			insert = queue->insert(threads[i], num);
-			if (insert == true)
-			{
-				cout << "requester " << num << " thread " << threads[i] << endl;
-				//queue->print();
-				queue->threads_numb--;
-				if (i == threads.size()-1)
-				{
-					queue->active_t--;
+		sem_wait(&Semaphores[num]);
+		sem_wait(&max_queue_capacity_sem);
+		sem_wait(&queue_mut);
+			print.lock();
+				queue->insert(tracks[i], num);
+				cout << "requester " << num << " track " << tracks[i] << endl;
+			print.unlock();
+			num_liv_thr_mut.lock();
+			//cout << queue->curr_size << "-" << num_liv_thr << "-" << max_queue_capacity << endl;
+				if (queue->curr_size == min(max_queue_capacity, num_liv_thr)){
+					sem_post(&full_queue_sem);
 				}
-			}
-			mut.unlock();
-		}
+			num_liv_thr_mut.unlock();
+		sem_post(&queue_mut);
 	}
+	sem_wait(&Semaphores[num]);
+	sem_wait(&queue_mut);
+	num_liv_thr_mut.lock();
+		num_liv_thr--;
+			print.lock();
+			//cout << queue->curr_size << "-" << num_liv_thr << "-" << max_queue_capacity << endl;
+			print.unlock();
+		if (queue->curr_size == num_liv_thr) {
+			//cout << "a\n";
+			//cout << queue->curr_size << "-" << num_liv_thr << "-" << max_queue_capacity << endl;
+			sem_post(&full_queue_sem);
+		}
+	num_liv_thr_mut.unlock();
+	sem_post(&queue_mut);
 }
 
 void main_thread(SSTF_Queue *queue, int num)
 {
 	tuple<int, int> tuple;
-	while (queue->curr_size < queue->capacity) {}
-	while (queue->curr_size > 0)
+	
+	while (queue->curr_size > 0 || num_liv_thr > 0)
 	{
-		//cout << queue->threads_numb << "," << queue->active_t << endl;
-		if (queue->curr_size == queue->capacity || queue->threads_numb == queue->active_t || queue->active_t == 0)
-		{
-			mut.lock();
-			tuple = queue->take();
-			cout << "service requester " << get<1>(tuple) << " thread " << get<0>(tuple) << endl;
-			//queue->print();
-			queue->threads_numb++;
-			mut.unlock();			
-		}
+		//cout << "b\n";
+		sem_wait(&full_queue_sem);
+		num_liv_thr_mut.lock();
+			if (num_liv_thr == 0) {
+				break;
+			}
+		num_liv_thr_mut.unlock();
+		//cout << "c\n";
+		sem_wait(&queue_mut);
+			print.lock();
+				tuple = queue->take();
+				cout << "service requester " << get<1>(tuple) << " thread " << get<0>(tuple) << endl;
+				//cout << "num_liv_thr: " << num_liv_thr << endl;
+			print.unlock();
+		sem_post(&queue_mut);
+		sem_post(&max_queue_capacity_sem);
+		sem_post(&Semaphores[get<1>(tuple)]);
+		//cout << queue->curr_size << "-" << num_liv_thr << endl;
 	}
 }
 
-
 int main(int argc, char const *argv[])
 {
-	thread Threads[argc-1];
-	SSTF_Queue queue = SSTF_Queue(atoi(argv[1]), argc-2);
+	int threads_num = argc-2;
+	num_liv_thr = argc-2;
+	max_queue_capacity = atoi(argv[1]);
+	thread Threads[threads_num+1];
+	Semaphores = new sem_t[threads_num];
+	SSTF_Queue queue = SSTF_Queue(max_queue_capacity);
 
-	for (int i = 0; i < argc-2; i++)
+	sem_init(&full_queue_sem, 0, 0);
+	sem_init(&max_queue_capacity_sem, 0, max_queue_capacity);
+	sem_init(&queue_mut, 0, 1);
+
+	for (int i = 0; i < threads_num; i++)
 	{
 		Threads[i] = thread(&thread_handling, argv[i+2], i, &queue);
+		sem_init(&Semaphores[i], 0, 1);
 	}
-	Threads[argc-2] = thread(&main_thread, &queue, argc-2);
+	Threads[threads_num] = thread(&main_thread, &queue, threads_num);
 	for (int i = 0; i < argc-1; i++)
 	{
 		Threads[i].join();
