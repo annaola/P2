@@ -1,5 +1,5 @@
 # P2
-Pracownia 2 - Systemy Operacyjne
+Pracownia 2 - Systemy Operacyjne - disk scheduler
 
 ## Temat 4
 ### Prosty program współbieżny zarządzający żądaniami dysku
